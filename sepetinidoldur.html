@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sepeti Doldur Oyunu</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    html, body {
+      margin: 0;
+      background: #fff8dc;
+      font-family: Arial, sans-serif;
+      overflow-x: hidden;
+      touch-action: manipulation;
+    }
+    #gameArea {
+      position: relative;
+      width: 99%;
+      max-width: 960px;
+      height: 450px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 2px solid #000;
+      overflow: hidden;
+    }
+    #dropBox {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 80px;
+      height: 20px;
+      background: #ffe8a1;
+      border: 4px solid #000;
+      z-index: 2;
+      cursor: grab;
+      touch-action: none;
+    }
+    #scoreboard, #timer {
+      position: absolute;
+      top: 10px;
+      background: #fff;
+      padding: 8px 12px;
+      font-weight: bold;
+      border: 2px solid #000;
+      font-size: 16px;
+      z-index: 3;
+    }
+    #scoreboard { left: 10px; }
+    #timer { right: 10px; }
+    #collectedItems {
+      text-align: center;
+      width: 100%;
+      max-width: 960px;
+      margin: 0 auto;
+      background: #ffffff;
+      overflow: hidden;
+    }
+    #collectedItems img {
+      width: 40px;
+      margin: 4px;
+    }
+    #rewardContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 20px;
+      padding: 10px;
+    }
+    .reward-box {
+      flex: 1 1 40%;
+      min-width: 140px;
+      max-width: 180px;
+      border: 2px dashed #000;
+      padding: 10px;
+      text-align: center;
+      font-size: 14px;
+      background: #fff;
+    }
+    .reward-box strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    #restartBtn {
+      margin-top: 12px;
+      padding: 12px 24px;
+      font-size: 16px;
+      background: #000;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="gameArea">
+  <div id="scoreboard">Skor: 0</div>
+  <div id="timer">Süre: 60</div>
+  <div id="dropBox"></div>
+</div>
+<div id="collectedItems"></div>
+<div id="rewardContainer"></div>
+
+<script>
+  const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+  const speedFactor = isMobile ? 0.6 : 1.0;
+
+  let products = [];
+  let counts = {};
+  let rewarded = {};
+  let score = 0;
+  let timeLeft = 60;
+  let isDragging = false;
+  let offsetX = 0;
+  let activeFalling = [];
+
+  const dropBox = document.getElementById("dropBox");
+  const scoreboard = document.getElementById("scoreboard");
+  const timerDisplay = document.getElementById("timer");
+  const gameArea = document.getElementById("gameArea");
+  const rewardContainer = document.getElementById("rewardContainer");
+  const collectedItems = document.getElementById("collectedItems");
+
+  async function loadProducts() {
+    const res = await fetch('https://opensheet.vercel.app/1Kf99zjadkz2VmdDXzzOVkMPFaVYchdXwTX1TpB7fSw4/data1');
+    const data = await res.json();
+    products = data.map(p => ({
+      id: p.campaign_id,
+      img: p.product_img,
+      code: p.coupon_code,
+      name: p.product_detail,
+      weight: parseInt(p.weight)
+    }));
+    products.forEach(p => {
+      counts[p.id] = 0;
+      rewarded[p.id] = false;
+    });
+    startGame();
+  }
+
+  function weightedRandom() {
+    const totalWeight = products.reduce((sum, p) => sum + p.weight, 0);
+    let r = Math.random() * totalWeight;
+    for (let p of products) {
+      if (r < p.weight) return p;
+      r -= p.weight;
+    }
+    return products[products.length - 1];
+  }
+
+  function handleDrop(product) {
+    if (!product || counts[product.id] >= 5) return;
+    score += 10;
+    scoreboard.innerText = "Skor: " + score;
+    counts[product.id]++;
+    const existing = collectedItems.querySelectorAll(`img[data-id="${product.id}"]`);
+    if (existing.length < 5) {
+      const icon = document.createElement("img");
+      icon.src = product.img;
+      icon.dataset.id = product.id;
+      collectedItems.appendChild(icon);
+    }
+    if (counts[product.id] === 5 && !rewarded[product.id]) {
+      rewarded[product.id] = true;
+      showReward(product);
+    }
+    const totalCollected = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (totalCollected === products.length * 5) endGame("completed");
+  }
+
+  function showReward(product) {
+    const box = document.createElement("div");
+    box.className = "reward-box";
+    box.innerHTML = `
+      <strong>${product.name}</strong>
+      <div>${product.code}</div>
+    `;
+    rewardContainer.appendChild(box);
+  }
+
+  function dropBatch() {
+    const usedX = [];
+    for (let i = 0; i < 4;) {
+      const x = Math.floor(Math.random() * (gameArea.clientWidth - 100));
+      if (!usedX.some(prev => Math.abs(prev - x) < 100)) {
+        const product = weightedRandom();
+        const el = document.createElement("img");
+        el.src = product.img;
+        el.style.width = "80px";
+        el.style.height = "80px";
+        el.style.position = "absolute";
+        el.style.top = "0px";
+        el.style.left = x + "px";
+        el.dataset.productId = product.id;
+        el.classList.add("fallingProduct");
+        gameArea.appendChild(el);
+        activeFalling.push({ el, y: 0, speed: (2 + Math.random() * 1.5) * speedFactor, product });
+        i++;
+      }
+    }
+  }
+
+  function animate() {
+    const dropRect = dropBox.getBoundingClientRect();
+    for (let i = activeFalling.length - 1; i >= 0; i--) {
+      const obj = activeFalling[i];
+      obj.y += obj.speed;
+      obj.el.style.top = obj.y + "px";
+
+      const elRect = obj.el.getBoundingClientRect();
+      if (
+        elRect.bottom >= dropRect.top &&
+        elRect.left < dropRect.right &&
+        elRect.right > dropRect.left
+      ) {
+        handleDrop(obj.product);
+        obj.el.remove();
+        activeFalling.splice(i, 1);
+        continue;
+      }
+
+      if (obj.y > gameArea.clientHeight) {
+        obj.el.remove();
+        activeFalling.splice(i, 1);
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+
+  function startGame() {
+    dropBatch();
+    gameInterval = setInterval(dropBatch, 3000);
+    timerInterval = setInterval(() => {
+      timeLeft--;
+      timerDisplay.innerText = "Süre: " + timeLeft;
+      if (timeLeft <= 0) endGame("timeout");
+    }, 1000);
+    animate();
+  }
+
+  function endGame(reason) {
+    clearInterval(gameInterval);
+    clearInterval(timerInterval);
+
+    const endMsgWrapper = document.createElement("div");
+    endMsgWrapper.style.width = "100%";
+    endMsgWrapper.style.display = "flex";
+    endMsgWrapper.style.flexDirection = "column";
+    endMsgWrapper.style.alignItems = "center";
+    endMsgWrapper.style.marginTop = "30px";
+
+    const msg = document.createElement("div");
+    msg.style.fontSize = "18px";
+    msg.style.marginBottom = "10px";
+    msg.innerText = reason === "timeout"
+      ? "⏰ Süre doldu! Oyun bitti."
+      : "🥳 Toplayacak ürün kalmadı!";
+
+    const restartBtn = document.createElement("button");
+    restartBtn.id = "restartBtn";
+    restartBtn.innerText = "Yeniden Oyna";
+    restartBtn.onclick = () => location.reload();
+
+    endMsgWrapper.appendChild(msg);
+    endMsgWrapper.appendChild(restartBtn);
+    rewardContainer.appendChild(endMsgWrapper);
+  }
+
+  // Mouse destekli hareket
+  dropBox.addEventListener("mousedown", e => {
+    isDragging = true;
+    offsetX = e.clientX - dropBox.offsetLeft;
+    document.body.style.userSelect = "none";
+  });
+  document.addEventListener("mousemove", e => {
+    if (isDragging) {
+      let newLeft = e.clientX - offsetX;
+      const maxLeft = gameArea.clientWidth - dropBox.offsetWidth;
+      dropBox.style.left = Math.max(0, Math.min(newLeft, maxLeft)) + "px";
+    }
+  });
+  document.addEventListener("mouseup", () => {
+    isDragging = false;
+    document.body.style.userSelect = "";
+  });
+
+  // Touch destekli hareket
+  dropBox.addEventListener("touchstart", e => {
+    offsetX = e.touches[0].clientX - dropBox.offsetLeft;
+  });
+  dropBox.addEventListener("touchmove", e => {
+    const touch = e.touches[0];
+    let newLeft = touch.clientX - offsetX;
+    const maxLeft = gameArea.clientWidth - dropBox.offsetWidth;
+    dropBox.style.left = Math.max(0, Math.min(newLeft, maxLeft)) + "px";
+  }, { passive: true });
+
+  loadProducts();
+</script>
+</body>
+</html>
